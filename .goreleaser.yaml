@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/goreleaser/goreleaser/refs/heads/main/www/docs/static/schema.json
 version: 2
-project_name: azure-azure-postgres-auth-proxy
+project_name: azure-postgres-auth-proxy
 builds:
   - env: [CGO_ENABLED=0]
     binary: azure-postgres-auth-proxy
