@@ -80,7 +80,7 @@ spec:
         args: ["host=127.0.0.1 port=5432 sslmode=disable user=${DATABASE_USERNAME} dbname=${DATABASE_NAME}", "-c", '\l']
       initContainers:
       - name: postgres-auth-proxy
-        image: akselleirv/postgres-auth-proxy:0.0.1
+        image: ghcr.io/telenornorway/postgres-auth-proxy:0.1.0
         restartPolicy: Always
         args:
         - -db-host=${DATABASE_HOST}
