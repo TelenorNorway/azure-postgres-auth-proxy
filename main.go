@@ -28,7 +28,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	const help = `The postgres-auth-proxy proxies PostgreSQL connections to a backend PostgreSQL server using Entra for authentication.
+	const help = `The azure-postgres-auth-proxy proxies PostgreSQL connections to a backend PostgreSQL server using Entra for authentication.
 	Usage:
 		`
 

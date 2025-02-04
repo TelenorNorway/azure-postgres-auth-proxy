@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/goreleaser/goreleaser/refs/heads/main/www/docs/static/schema.json
 version: 2
-project_name: postgres-auth-proxy
+project_name: azure-azure-postgres-auth-proxy
 builds:
   - env: [CGO_ENABLED=0]
-    binary: postgres-auth-proxy
+    binary: azure-postgres-auth-proxy
     goos:
       - linux
       - windows
@@ -12,11 +12,11 @@ builds:
       - amd64
       - arm64
 dockers:
-- image_templates: ["ghcr.io/telenornorway/postgres-auth-proxy:{{ .Version }}"]
+- image_templates: ["ghcr.io/telenornorway/azure-postgres-auth-proxy:{{ .Version }}"]
   build_flag_templates:
   - --label=org.opencontainers.image.title={{ .ProjectName }}
-  - --label=org.opencontainers.image.url=https://github.com/TelenorNorway/postgres-auth-proxy
-  - --label=org.opencontainers.image.source=https://github.com/TelenorNorway/postgres-auth-proxy
+  - --label=org.opencontainers.image.url=https://github.com/TelenorNorway/azure-postgres-auth-proxy
+  - --label=org.opencontainers.image.source=https://github.com/TelenorNorway/azure-postgres-auth-proxy
   - --label=org.opencontainers.image.version={{ .Version }}
   - --label=org.opencontainers.image.created={{ .Date }}
   - --label=org.opencontainers.image.revision={{ .FullCommit }}

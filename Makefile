@@ -2,7 +2,7 @@
 
 root_dir := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-IMAGE ?= ghcr.io/telenornorway/postgres-auth-proxy
+IMAGE ?= ghcr.io/telenornorway/azure-postgres-auth-proxy
 TAG ?= latest
 
 help:

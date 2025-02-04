@@ -1,4 +1,4 @@
-# postgres-auth-proxy
+# azure-postgres-auth-proxy
 
 A proxy that uses Microsoft Entra authentication for Azure PostgreSQL.
 
@@ -13,7 +13,7 @@ in the [Azure SDK for Go documentation](https://pkg.go.dev/github.com/Azure/azur
 
 ## Installation
 
-Download the latest release from the [releases page](https://github.com/TelenorNorway/postgres-auth-proxy/releases).
+Download the latest release from the [releases page](https://github.com/TelenorNorway/azure-postgres-auth-proxy/releases).
 
 ## Usage
 
@@ -22,7 +22,7 @@ You can run the proxy locally or as a sidecar in your Kubernetes cluster.
 ### Local
 
 ```bash
-./postgres-auth-proxy -db-addr your-database.postgres.database.azure.com:5432
+./azure-postgres-auth-proxy -db-addr your-database.postgres.database.azure.com:5432
 ```
 
 Connect to the proxy using your favorite Postgres client.
@@ -79,8 +79,8 @@ spec:
         image: alpine/psql
         args: ["host=127.0.0.1 port=5432 sslmode=disable user=${DATABASE_USERNAME} dbname=${DATABASE_NAME}", "-c", '\l']
       initContainers:
-      - name: postgres-auth-proxy
-        image: ghcr.io/telenornorway/postgres-auth-proxy:0.1.0
+      - name: azure-postgres-auth-proxy
+        image: ghcr.io/telenornorway/azure-postgres-auth-proxy:0.1.0
         restartPolicy: Always
         args:
         - -db-host=${DATABASE_HOST}
