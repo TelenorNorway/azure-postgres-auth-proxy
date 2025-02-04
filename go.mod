@@ -1,4 +1,4 @@
-module github.com/TelenorNorway/s07373-postgres-auth-proxy
+module github.com/TelenorNorway/postgres-auth-proxy
 
 go 1.23.5
 

@@ -3,24 +3,29 @@ name: Build
 on:
   push:
     branches:
-      - main
+      - "main"
+    tags:
+      - "v*"
   pull_request:
-    branches:
-      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required publish to GitHub Container Registry
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.0.0
-     
+        uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.0.0
+        with:
+          fetch-depth: 0
+
       - name: Setup Go
         uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version-file: go.mod
-      
+
       - name: Setup QEMU
         uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
         with:
@@ -29,6 +34,17 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Build Docker image
-        run: make docker-build
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: goreleaser/goreleaser-action@@286f3b13b1b49da4ac219696163fb8c1c93e1200 # v6.0.0
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

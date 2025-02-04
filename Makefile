@@ -11,7 +11,7 @@ help:
 build: ## Build the app
 	go build -o bin/app .
 
-docker-build: build ## Build the app docker image
+docker-build: ## Build the app docker image
 	docker build -t ${IMAGE}:${TAG} .
 
 test: ## Run tests
