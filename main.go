@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -46,6 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	*dbHost = strings.Trim(strings.TrimSpace(*dbHost), `"`) // passing the arg db-host in k8s yaml can add quotes, so we remove them
 	if _, _, err := net.SplitHostPort(*dbHost); err != nil {
 		fmt.Println("invalid -db-host value:", err)
 		os.Exit(1)
