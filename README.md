@@ -80,7 +80,7 @@ spec:
         args: ["host=127.0.0.1 port=5432 sslmode=disable user=${DATABASE_USERNAME} dbname=${DATABASE_NAME}", "-c", '\l']
       initContainers:
       - name: azure-postgres-auth-proxy
-        image: ghcr.io/telenornorway/azure-postgres-auth-proxy:0.1.0
+        image: ghcr.io/telenornorway/azure-postgres-auth-proxy:0.1.2
         restartPolicy: Always
         args:
         - -db-host=${DATABASE_HOST}
