@@ -116,6 +116,10 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 
 func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, azureCred azcore.TokenCredential) {
 	defer func() {
+		// Recover from any panic to prevent crashing the entire proxy
+		if r := recover(); r != nil {
+			l.Error("panic in connection handler", "panic", r, "client", clientConn.RemoteAddr())
+		}
 		if err := clientConn.Close(); err != nil {
 			slog.Error("failed to close client connection", "error", err)
 		}
@@ -211,12 +215,22 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				l.Error("panic in client->backend copy", "panic", r)
+			}
+		}()
 		if _, err := io.Copy(backendNetConn, clientConn); err != nil {
 			l.Error("failed to copy data from client to backend", "error", err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				l.Error("panic in backend->client copy", "panic", r)
+			}
+		}()
 		if _, err := io.Copy(clientConn, backendNetConn); err != nil {
 			l.Error("failed to copy data from backend to client", "error", err)
 		}

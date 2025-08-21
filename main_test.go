@@ -173,3 +173,49 @@ func getFreePort() (port int, err error) {
 	}
 	return
 }
+
+// TestPanicRecovery verifies that a panic in handleConnection doesn't propagate
+func TestPanicRecovery(t *testing.T) {
+	// Create a mock connection that panics on Read
+	mockConn := &panicConn{}
+	
+	// Create valid credentials
+	creds := &fakeAzureCredential{
+		token: azcore.AccessToken{
+			Token:     "test",
+			ExpiresOn: time.Now().Add(1 * time.Hour),
+		},
+	}
+
+	// This should not panic despite mockConn.Read() panicking
+	// The panic should be recovered in handleConnection
+	handleConnection(context.Background(), mockConn, "test:5432", creds)
+	
+	// If we got here, the panic was recovered successfully
+	t.Log("Panic was recovered successfully")
+}
+
+// panicConn is a mock connection that panics on Read
+type panicConn struct {
+	net.Conn
+}
+
+func (p *panicConn) Read(b []byte) (n int, err error) {
+	panic("simulated panic in Read")
+}
+
+func (p *panicConn) Write(b []byte) (n int, err error) {
+	return len(b), nil
+}
+
+func (p *panicConn) Close() error {
+	return nil
+}
+
+func (p *panicConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345}
+}
+
+func (p *panicConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
