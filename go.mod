@@ -1,8 +1,6 @@
 module github.com/TelenorNorway/azure-postgres-auth-proxy
 
-go 1.23.5
-
-toolchain go1.24.1
+go 1.25.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.2
