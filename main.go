@@ -36,6 +36,7 @@ func main() {
 
 	listenAddr := flag.String("listen-addr", "127.0.0.1:5432", "Address the proxy listens on. Binding to the loopback interface protects it from external access outside the pod network namespace.")
 	dbHost := flag.String("db-host", "", "Host of the PostgreSQL server to proxy traffic to. For example 'mydb.postgres.database.azure.com:5432'.")
+	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "Maximum time to wait for existing connections to close during graceful shutdown.")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), help+"\n")
 		flag.PrintDefaults()
@@ -70,13 +71,13 @@ func main() {
 
 	l.Info("successfully obtained an entra token")
 
-	if err := run(ctx, *dbHost, *listenAddr, azureCred); err != nil {
+	if err := run(ctx, *dbHost, *listenAddr, *shutdownTimeout, azureCred); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenCredential) error {
+func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Duration, azureCred azcore.TokenCredential) error {
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -89,11 +90,26 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 
 	l.Info("proxy is listening", "listenAddr", listenAddr, "dbHost", dbHost)
 
+	var connWg sync.WaitGroup
 	go func() {
 		<-ctx.Done()
 		l.Info("shutting down listener due to cancellation")
 		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			l.Error("failed to close listener", "error", err)
+		}
+
+		l.Info("waiting for existing connections to close", "timeout", shutdownTimeout)
+		done := make(chan struct{})
+		go func() {
+			connWg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			l.Info("all connections closed gracefully")
+		case <-time.After(shutdownTimeout):
+			l.Warn("shutdown timeout reached, some connections may have been forcefully closed")
 		}
 	}()
 
@@ -110,7 +126,7 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 			continue
 		}
 
-		go handleConnection(ctx, clientConn, dbHost, azureCred)
+		connWg.Go(func() { handleConnection(ctx, clientConn, dbHost, azureCred) })
 	}
 }
 
@@ -212,9 +228,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 	l.Info("proxy connection successful", "clientAddr", clientConn.RemoteAddr(), "backendAddr", backendNetConn.RemoteAddr())
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
 				l.Error("panic in client->backend copy", "panic", r)
@@ -223,9 +237,8 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 		if _, err := io.Copy(backendNetConn, clientConn); err != nil {
 			l.Error("failed to copy data from client to backend", "error", err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
 				l.Error("panic in backend->client copy", "panic", r)
@@ -234,7 +247,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 		if _, err := io.Copy(clientConn, backendNetConn); err != nil {
 			l.Error("failed to copy data from backend to client", "error", err)
 		}
-	}()
+	})
 
 	wg.Wait()
 
