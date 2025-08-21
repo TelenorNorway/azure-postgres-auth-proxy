@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -43,6 +44,13 @@ func TestRun(t *testing.T) {
 		{postgresVersion: "postgres:15-alpine"},
 		{postgresVersion: "postgres:14-alpine"},
 		{postgresVersion: "postgres:13-alpine"},
+	}
+
+	// Required setting flag when running on darwin
+	if runtime.GOOS == "darwin" {
+		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
+			t.Fatalf("failed to set environment variable: %v", err)
+		}
 	}
 
 	for _, tt := range tests {
