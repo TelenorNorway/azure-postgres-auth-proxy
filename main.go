@@ -36,7 +36,7 @@ func main() {
 	listenAddr := flag.String("listen-addr", "127.0.0.1:5432", "Address the proxy listens on. Binding to the loopback interface protects it from external access outside the pod network namespace.")
 	dbHost := flag.String("db-host", "", "Host of the PostgreSQL server to proxy traffic to. For example 'mydb.postgres.database.azure.com:5432'.")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), help+"\n")
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), help+"\n")
 		flag.PrintDefaults()
 	}
 
@@ -80,14 +80,20 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
-	defer ln.Close()
+	defer func() {
+		if err := ln.Close(); err != nil && err != net.ErrClosed {
+			l.Error("failed to close listener", "error", err)
+		}
+	}()
 
 	l.Info("proxy is listening", "listenAddr", listenAddr, "dbHost", dbHost)
 
 	go func() {
 		<-ctx.Done()
 		l.Info("shutting down listener due to cancellation")
-		ln.Close()
+		if err := ln.Close(); err != nil {
+			l.Error("failed to close listener", "error", err)
+		}
 	}()
 
 	for {
@@ -108,7 +114,11 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 }
 
 func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, azureCred azcore.TokenCredential) {
-	defer clientConn.Close()
+	defer func() {
+		if err := clientConn.Close(); err != nil {
+			slog.Error("failed to close client connection", "error", err)
+		}
+	}()
 
 	startupMsg, err := readStartupMessage(clientConn)
 	if err != nil {
@@ -161,7 +171,11 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 		l.Error("failed to connect to backend", "error", err)
 		return
 	}
-	defer backendConn.Close(ctx)
+	defer func() {
+		if err := backendConn.Close(ctx); err != nil {
+			l.Error("failed to close backend connection", "error", err)
+		}
+	}()
 
 	l.Info("successfully connected to the database", "addr", dbHost)
 
@@ -176,7 +190,11 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 		l.Error("failed to hijack backend connection", "error", err)
 		return
 	}
-	defer hijackedBackend.Conn.Close()
+	defer func() {
+		if err := hijackedBackend.Conn.Close(); err != nil {
+			l.Error("failed to close hijacked backend connection", "error", err)
+		}
+	}()
 
 	l.Info("simulating client handshake")
 	if err := simulateClientHandshake(clientConn, hijackedBackend); err != nil {
