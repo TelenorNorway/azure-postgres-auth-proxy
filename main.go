@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -81,7 +82,7 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 	defer func() {
-		if err := ln.Close(); err != nil && err != net.ErrClosed {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			l.Error("failed to close listener", "error", err)
 		}
 	}()
@@ -91,7 +92,7 @@ func run(ctx context.Context, dbHost, listenAddr string, azureCred azcore.TokenC
 	go func() {
 		<-ctx.Done()
 		l.Info("shutting down listener due to cancellation")
-		if err := ln.Close(); err != nil {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			l.Error("failed to close listener", "error", err)
 		}
 	}()
