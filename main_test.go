@@ -48,8 +48,7 @@ func TestRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.postgresVersion, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 
 			caCert, serverCerts, err := createSSLCerts(t)
 			require.NoError(t, err)
