@@ -263,6 +263,13 @@ func simulateClientHandshake(clientConn net.Conn, hijackedBackend *pgconn.Hijack
 
 // readStartupMessage reads the PostgreSQL startup message from the client.
 func readStartupMessage(clientConn net.Conn) (*pgproto3.StartupMessage, error) {
+	// Set a read timeout to prevent hanging on malicious/broken clients
+	if err := clientConn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
+	// Clear the deadline when done, regardless of success or failure
+	defer func() { _ = clientConn.SetReadDeadline(time.Time{}) }()
+
 	frontend := pgproto3.NewBackend(clientConn, clientConn)
 	msg, err := frontend.ReceiveStartupMessage()
 	if err != nil {
