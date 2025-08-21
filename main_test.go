@@ -48,7 +48,9 @@ func TestRun(t *testing.T) {
 
 	// Required setting flag when running on darwin
 	if runtime.GOOS == "darwin" {
-		os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
+			t.Fatalf("failed to set environment variable: %v", err)
+		}
 	}
 
 	for _, tt := range tests {
