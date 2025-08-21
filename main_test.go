@@ -194,16 +194,16 @@ func TestGracefulShutdownTimeout(t *testing.T) {
 	select {
 	case err := <-queryDone:
 		shutdownDuration := time.Since(shutdownStart)
-		
+
 		// The query should fail due to connection being closed during shutdown timeout
 		require.Error(t, err, "long-running query should have been interrupted by shutdown timeout")
-		
+
 		// The query should fail due to connection being forcefully closed after timeout
 		// The actual duration may be longer than the timeout because the PostgreSQL query
 		// continues running until the connection is actually closed
-		assert.GreaterOrEqual(t, shutdownDuration, proxyShutdownTimeout-500*time.Millisecond, 
+		assert.GreaterOrEqual(t, shutdownDuration, proxyShutdownTimeout-500*time.Millisecond,
 			"shutdown should have taken at least the timeout duration")
-		
+
 		// The important thing is that it didn't wait for the full 10 seconds
 		assert.Less(t, shutdownDuration, 10*time.Second,
 			"shutdown should not have waited for the full query duration")
