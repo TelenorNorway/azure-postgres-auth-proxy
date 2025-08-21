@@ -38,6 +38,7 @@ func TestRun(t *testing.T) {
 	tests := []struct {
 		postgresVersion string
 	}{
+		{postgresVersion: "postgres:18-alpine"},
 		{postgresVersion: "postgres:17-alpine"},
 		{postgresVersion: "postgres:16-alpine"},
 		{postgresVersion: "postgres:15-alpine"},
