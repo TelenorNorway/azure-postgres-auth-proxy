@@ -104,14 +104,15 @@ func TestRun(t *testing.T) {
 				connString := fmt.Sprintf("postgresql://%s:%s@%s/%s?sslmode=disable", dbUser, "this-password-should-be-overwritten-by-the-proxy", proxyHost, dbName)
 				l.Info("connecting to database", "connString", connString)
 				conn, err = pgx.Connect(ctx, connString)
-				if err != nil {
-					return false
-				}
-				return true
+				return err == nil
 			}, timeout, retry)
 
 			require.NotNil(t, conn)
-			defer conn.Close(ctx)
+			defer func() {
+				if err := conn.Close(ctx); err != nil {
+					t.Logf("failed to close connection: %v", err)
+				}
+			}()
 
 			var result int
 			require.NoError(t, conn.QueryRow(ctx, "SELECT 1").Scan(&result))
@@ -160,7 +161,7 @@ func getFreePort() (port int, err error) {
 	if a, err = net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
 		var l *net.TCPListener
 		if l, err = net.ListenTCP("tcp", a); err == nil {
-			defer l.Close()
+			defer func() { _ = l.Close() }()
 			return l.Addr().(*net.TCPAddr).Port, nil
 		}
 	}

@@ -16,3 +16,7 @@ docker-build: ## Build the app docker image
 
 test: ## Run tests
 	go test -v ./...
+
+lint: ## Run linters
+	go fmt ./...
+	go tool -modfile=tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
