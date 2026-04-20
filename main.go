@@ -271,11 +271,21 @@ func simulateClientHandshake(clientConn net.Conn, hijackedBackend *pgconn.Hijack
 	handshakeMessages := []pgproto3.BackendMessage{
 		&pgproto3.AuthenticationOk{},
 	}
-	for k, v := range hijackedBackend.Config.RuntimeParams {
+	// Send server parameters from ParameterStatuses (includes server_version, etc.)
+	for k, v := range hijackedBackend.ParameterStatuses {
 		handshakeMessages = append(handshakeMessages, &pgproto3.ParameterStatus{
 			Name:  k,
 			Value: v,
 		})
+	}
+	// Send any additional client-provided runtime params not already sent
+	for k, v := range hijackedBackend.Config.RuntimeParams {
+		if _, exists := hijackedBackend.ParameterStatuses[k]; !exists {
+			handshakeMessages = append(handshakeMessages, &pgproto3.ParameterStatus{
+				Name:  k,
+				Value: v,
+			})
+		}
 	}
 	handshakeMessages = append(handshakeMessages, &pgproto3.BackendKeyData{
 		ProcessID: uint32(hijackedBackend.PID),
