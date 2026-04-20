@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -172,8 +173,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 
 	l.Info("obtained Azure Entra token", "expiresAt", token.ExpiresOn)
 
-	connStr := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=require", clientUser, token.Token, dbHost, clientDatabase)
-	config, err := pgconn.ParseConfig(connStr)
+	config, err := buildConfig(clientUser, token.Token, dbHost, clientDatabase)
 	if err != nil {
 		l.Error("failed to parse connection string", "error", err)
 		return
@@ -252,6 +252,17 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 	wg.Wait()
 
 	l.Info("proxy connection closed", "clientAddr", clientConn.RemoteAddr(), "backendAddr", backendNetConn.RemoteAddr())
+}
+
+func buildConfig(user, password, host, database string) (*pgconn.Config, error) {
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     host,
+		Path:     database,
+		RawQuery: "sslmode=require",
+	}
+	return pgconn.ParseConfig(u.String())
 }
 
 // simulateClientHandshake simulates the PostgreSQL handshake between the client and the backend.
