@@ -359,3 +359,30 @@ func startProxyAndConnect(t *testing.T, ctx context.Context, dbHost string, cfg 
 
 	return conn
 }
+
+func TestConnStrWithSpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name     string
+		user     string
+		password string
+		host     string
+		database string
+	}{
+		{"plain username", "johndoe", "token123", "localhost:5432", "mydb"},
+		{"plain with numbers", "user123", "token123", "localhost:5432", "mydb"},
+		{"space in username", "john doe", "token123", "localhost:5432", "mydb"},
+		{"colon", "john:doe", "token123", "localhost:5432", "mydb"},
+		{"special chars in password", "johndoe", "tok en+x=y&z", "localhost:5432", "mydb"},
+		{"email as username", "john.doe@example.com", "token123", "localhost:5432", "mydb"},
+		{"unicode username", "jøhn", "token123", "localhost:5432", "mydb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildConfig(tt.user, tt.password, tt.host, tt.database)
+			if err != nil {
+				t.Errorf("expected no error for user %q, got: %v", tt.user, err)
+			}
+		})
+	}
+}
