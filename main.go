@@ -289,7 +289,7 @@ func simulateClientHandshake(clientConn net.Conn, hijackedBackend *pgconn.Hijack
 	}
 	handshakeMessages = append(handshakeMessages, &pgproto3.BackendKeyData{
 		ProcessID: uint32(hijackedBackend.PID),
-		SecretKey: uint32(hijackedBackend.SecretKey),
+		SecretKey: hijackedBackend.SecretKey,
 	})
 	handshakeMessages = append(handshakeMessages, &pgproto3.ReadyForQuery{
 		TxStatus: 'I',
