@@ -38,6 +38,7 @@ func main() {
 	listenAddr := flag.String("listen-addr", "127.0.0.1:5432", "Address the proxy listens on. Binding to the loopback interface protects it from external access outside the pod network namespace.")
 	dbHost := flag.String("db-host", "", "Host of the PostgreSQL server to proxy traffic to. For example 'mydb.postgres.database.azure.com:5432'.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "Maximum time to wait for existing connections to close during graceful shutdown.")
+	connectTimeout := flag.Duration("connect-timeout", 5*time.Second, "Maximum time to wait to establish a connection.")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), help+"\n")
 		flag.PrintDefaults()
@@ -185,7 +186,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, a
 		}
 	}
 
-	ctxConn, cancelConn := context.WithTimeout(ctx, 5*time.Second)
+	ctxConn, cancelConn := context.WithTimeout(ctx, connectTimeout)
 	defer cancelConn()
 	backendConn, err := pgconn.ConnectConfig(ctxConn, config)
 	if err != nil {
