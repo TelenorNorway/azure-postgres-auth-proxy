@@ -73,13 +73,13 @@ func main() {
 
 	l.Info("successfully obtained an entra token")
 
-	if err := run(ctx, *dbHost, *listenAddr, *shutdownTimeout, azureCred); err != nil {
+	if err := run(ctx, *dbHost, *listenAddr, *shutdownTimeout, *connectTimeout, azureCred); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Duration, azureCred azcore.TokenCredential) error {
+func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Duration, connectTimeout time.Duration, azureCred azcore.TokenCredential) error {
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -128,11 +128,11 @@ func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Du
 			continue
 		}
 
-		connWg.Go(func() { handleConnection(ctx, clientConn, dbHost, azureCred) })
+		connWg.Go(func() { handleConnection(ctx, clientConn, dbHost, connectTimeout, azureCred) })
 	}
 }
 
-func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, azureCred azcore.TokenCredential) {
+func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, connectTimeout time.Duration, azureCred azcore.TokenCredential) {
 	defer func() {
 		// Recover from any panic to prevent crashing the entire proxy
 		if r := recover(); r != nil {
