@@ -25,6 +25,7 @@ import (
 
 var (
 	proxyShutdownTimeout = 5 * time.Second
+	proxyConnectTimeout  = 5 * time.Second
 )
 
 func TestRun(t *testing.T) {
@@ -78,7 +79,7 @@ func TestPanicRecovery(t *testing.T) {
 
 	// This should not panic despite mockConn.Read() panicking
 	// The panic should be recovered in handleConnection
-	handleConnection(context.Background(), mockConn, "test:5432", creds)
+	handleConnection(context.Background(), mockConn, "test:5432", proxyConnectTimeout, creds)
 
 	// If we got here, the panic was recovered successfully
 	t.Log("Panic was recovered successfully")
@@ -335,7 +336,7 @@ func startProxyAndConnect(t *testing.T, ctx context.Context, dbHost string, cfg 
 	require.NoError(t, err)
 	proxyHost := fmt.Sprintf("127.0.0.1:%d", proxyPort)
 	go func() {
-		err := run(ctx, dbHost, proxyHost, proxyShutdownTimeout, azCreds)
+		err := run(ctx, dbHost, proxyHost, proxyShutdownTimeout, proxyConnectTimeout, azCreds)
 		require.NoError(t, err)
 	}()
 
