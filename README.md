@@ -33,6 +33,38 @@ With `psql`:
 psql "host=127.0.0.1 port=5432 sslmode=disable user=<username> dbname=<database>"
 ```
 
+### Through an SSH bastion
+
+If the database is only reachable from a jump host, set `-ssh-host` and the proxy tunnels every database connection through it.
+The bastion resolves and connects to `-db-host`, so private endpoints work without entries in `/etc/hosts`.
+
+By default the proxy logs in with Microsoft Entra, just like `az ssh vm`.
+It uses your `az login` session to fetch a short-lived SSH certificate and renews it when needed, so no `az ssh config` or key files are required:
+
+```bash
+az login
+./azure-postgres-auth-proxy \
+  -db-host your-database.postgres.database.azure.com:5432 \
+  -ssh-host bastion.example.com
+```
+
+To log in with a private key instead, pass `-ssh-key-path` and `-ssh-user`.
+Set the passphrase of an encrypted key in the `SSH_KEY_PASSPHRASE` environment variable:
+
+```bash
+./azure-postgres-auth-proxy \
+  -db-host your-database.postgres.database.azure.com:5432 \
+  -ssh-host bastion.example.com:22 \
+  -ssh-user azureuser \
+  -ssh-key-path ~/.ssh/id_ed25519
+```
+
+The bastion host key is verified against `~/.ssh/known_hosts`, or the file given by `-ssh-known-hosts`.
+Add it with `ssh-keyscan bastion.example.com >> ~/.ssh/known_hosts` after verifying the fingerprints.
+
+Entra login reads the Azure CLI token cache, which is available on macOS and Linux.
+On Windows, use a private key.
+
 ### Kubernetes
 
 Create a `ServiceAccount` and `Deployment` with [Azure Workload Identity](https://azure.github.io/azure-workload-identity/docs/) configured.

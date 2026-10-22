@@ -39,6 +39,10 @@ func main() {
 	dbHost := flag.String("db-host", "", "Host of the PostgreSQL server to proxy traffic to. For example 'mydb.postgres.database.azure.com:5432'.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "Maximum time to wait for existing connections to close during graceful shutdown.")
 	connectTimeout := flag.Duration("connect-timeout", 5*time.Second, "Maximum time to wait to establish a connection.")
+	sshHost := flag.String("ssh-host", "", "Optional SSH bastion to tunnel database connections through. For example 'bastion.example.com'. The port defaults to 22. Without -ssh-key-path the proxy logs in with an Entra SSH certificate for the Azure CLI user, like 'az ssh vm'.")
+	sshKeyPath := flag.String("ssh-key-path", "", "Path to a private key to authenticate with the SSH bastion instead of Entra. If the key is encrypted, set its passphrase in the "+sshKeyPassphraseEnv+" environment variable.")
+	sshUser := flag.String("ssh-user", "", "User on the SSH bastion. Required with -ssh-key-path.")
+	sshKnownHosts := flag.String("ssh-known-hosts", defaultKnownHostsPath(), "Path to the known_hosts file used to verify the SSH bastion host key.")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), help+"\n")
 		flag.PrintDefaults()
@@ -57,6 +61,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *sshHost != "" {
+		if _, _, err := net.SplitHostPort(*sshHost); err != nil {
+			*sshHost = net.JoinHostPort(*sshHost, "22")
+		}
+		if *sshKeyPath != "" && *sshUser == "" {
+			fmt.Println("missing required flag: -ssh-user (required with -ssh-key-path)")
+			os.Exit(1)
+		}
+	}
+
 	// Create an Azure credential for token retrieval.
 	azureCred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
@@ -73,13 +87,24 @@ func main() {
 
 	l.Info("successfully obtained an entra token")
 
-	if err := run(ctx, *dbHost, *listenAddr, *shutdownTimeout, *connectTimeout, azureCred); err != nil {
+	var dial pgconn.DialFunc
+	if *sshHost != "" {
+		tunnel, err := connectSSHTunnel(ctx, *sshHost, *sshUser, *sshKeyPath, *sshKnownHosts)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		defer func() { _ = tunnel.Close() }()
+		dial = tunnel.DialContext
+	}
+
+	if err := run(ctx, *dbHost, *listenAddr, *shutdownTimeout, *connectTimeout, azureCred, dial); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Duration, connectTimeout time.Duration, azureCred azcore.TokenCredential) error {
+func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Duration, connectTimeout time.Duration, azureCred azcore.TokenCredential, dial pgconn.DialFunc) error {
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -128,11 +153,11 @@ func run(ctx context.Context, dbHost, listenAddr string, shutdownTimeout time.Du
 			continue
 		}
 
-		connWg.Go(func() { handleConnection(ctx, clientConn, dbHost, connectTimeout, azureCred) })
+		connWg.Go(func() { handleConnection(ctx, clientConn, dbHost, connectTimeout, azureCred, dial) })
 	}
 }
 
-func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, connectTimeout time.Duration, azureCred azcore.TokenCredential) {
+func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, connectTimeout time.Duration, azureCred azcore.TokenCredential, dial pgconn.DialFunc) {
 	defer func() {
 		// Recover from any panic to prevent crashing the entire proxy
 		if r := recover(); r != nil {
@@ -184,6 +209,12 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, c
 		if k != "user" && k != "database" {
 			config.RuntimeParams[k] = v
 		}
+	}
+
+	if dial != nil {
+		config.DialFunc = dial
+		// The bastion resolves the database host, which may only be resolvable from its network.
+		config.LookupFunc = func(_ context.Context, host string) ([]string, error) { return []string{host}, nil }
 	}
 
 	ctxConn, cancelConn := context.WithTimeout(ctx, connectTimeout)
