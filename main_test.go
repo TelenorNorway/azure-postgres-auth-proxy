@@ -339,6 +339,57 @@ func writeSSHKey(t *testing.T, dir, name string, key crypto.Signer) (string, ssh
 	return path, signer.PublicKey()
 }
 
+func TestBackendErrorIsSentToClient(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	cfg := pgContainerConfig{
+		postgresVersion: "postgres:18-alpine",
+		dbName:          "mydatabase",
+		username:        "postgres",
+		password:        "fakepass",
+	}
+
+	dbHost := createPostgresContainer(t, cfg)
+	proxyHost := startProxy(t, ctx, dbHost, &fakeAzureCredential{
+		token: azcore.AccessToken{Token: "wrong-password", ExpiresOn: time.Now().Add(1 * time.Hour)},
+	}, nil)
+
+	pgErr := connectThroughProxyError(t, proxyHost, cfg)
+	assert.Equal(t, "28P01", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "password authentication failed")
+}
+
+func TestProxyErrorIsSentToClient(t *testing.T) {
+	t.Parallel()
+	cfg := pgContainerConfig{dbName: "mydatabase", username: "postgres"}
+
+	proxyHost := startProxy(t, t.Context(), "127.0.0.1:1", &fakeAzureCredential{
+		err: errors.New("token request was denied"),
+	}, nil)
+
+	pgErr := connectThroughProxyError(t, proxyHost, cfg)
+	assert.Equal(t, "28000", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "token request was denied")
+}
+
+func connectThroughProxyError(t *testing.T, proxyHost string, cfg pgContainerConfig) *pgconn.PgError {
+	t.Helper()
+	connString := fmt.Sprintf("postgresql://%s@%s/%s?sslmode=disable", cfg.username, proxyHost, cfg.dbName)
+
+	var pgErr *pgconn.PgError
+	require.Eventually(t, func() bool {
+		conn, err := pgx.Connect(t.Context(), connString)
+		if err == nil {
+			_ = conn.Close(t.Context())
+			return false
+		}
+		var ok bool
+		pgErr, ok = errors.AsType[*pgconn.PgError](err)
+		return ok
+	}, 10*time.Second, 100*time.Millisecond, "expected a PostgreSQL error from the proxy")
+	return pgErr
+}
+
 // getFreePort asks the kernel for a free open port that is ready to use.
 func getFreePort() (port int, err error) {
 	var a *net.TCPAddr
@@ -357,10 +408,11 @@ func getFreePort() (port int, err error) {
 // the token "test" which will match the PostgreSQL container’s password.
 type fakeAzureCredential struct {
 	token azcore.AccessToken
+	err   error
 }
 
 func (f *fakeAzureCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	return f.token, nil
+	return f.token, f.err
 }
 
 type pgContainerConfig struct {

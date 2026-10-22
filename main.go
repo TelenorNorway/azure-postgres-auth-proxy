@@ -179,11 +179,13 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, c
 	clientUser, ok := startupMsg.Parameters["user"]
 	if !ok {
 		l.Error("no user provided in startup message")
+		sendError(clientConn, "28000", errors.New("no user provided in startup message"))
 		return
 	}
 	clientDatabase, ok := startupMsg.Parameters["database"]
 	if !ok {
 		l.Error("no database provided in startup message")
+		sendError(clientConn, "3D000", errors.New("no database provided in startup message"))
 		return
 	}
 
@@ -194,6 +196,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, c
 	token, err := azureCred.GetToken(ctxToken, policy.TokenRequestOptions{Scopes: []string{azureDatabaseScope}})
 	if err != nil {
 		l.Error("error obtaining Azure Entra token", "error", err)
+		sendError(clientConn, "28000", fmt.Errorf("failed to obtain Azure Entra token: %w", err))
 		return
 	}
 
@@ -202,6 +205,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, c
 	config, err := buildConfig(clientUser, token.Token, dbHost, clientDatabase)
 	if err != nil {
 		l.Error("failed to parse connection string", "error", err)
+		sendError(clientConn, "08001", err)
 		return
 	}
 
@@ -222,6 +226,7 @@ func handleConnection(ctx context.Context, clientConn net.Conn, dbHost string, c
 	backendConn, err := pgconn.ConnectConfig(ctxConn, config)
 	if err != nil {
 		l.Error("failed to connect to backend", "error", err)
+		sendError(clientConn, "08001", err)
 		return
 	}
 	defer func() {
@@ -339,6 +344,29 @@ func simulateClientHandshake(clientConn net.Conn, hijackedBackend *pgconn.Hijack
 	}
 
 	return nil
+}
+
+func sendError(clientConn net.Conn, code string, err error) {
+	msg := &pgproto3.ErrorResponse{Severity: "FATAL", SeverityUnlocalized: "FATAL", Code: code, Message: err.Error()}
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		msg = &pgproto3.ErrorResponse{
+			Severity:            pgErr.Severity,
+			SeverityUnlocalized: pgErr.SeverityUnlocalized,
+			Code:                pgErr.Code,
+			Message:             pgErr.Message,
+			Detail:              pgErr.Detail,
+			Hint:                pgErr.Hint,
+		}
+	}
+
+	buf, err := msg.Encode(nil)
+	if err != nil {
+		l.Error("failed to encode error response", "error", err)
+		return
+	}
+	if _, err := clientConn.Write(buf); err != nil {
+		l.Error("failed to send error response to client", "error", err)
+	}
 }
 
 // readStartupMessage reads the PostgreSQL startup message from the client.
