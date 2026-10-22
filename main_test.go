@@ -33,11 +33,11 @@ func TestRun(t *testing.T) {
 	tests := []struct {
 		postgresVersion string
 	}{
+		{postgresVersion: "postgres:18-alpine"},
 		{postgresVersion: "postgres:17-alpine"},
 		{postgresVersion: "postgres:16-alpine"},
 		{postgresVersion: "postgres:15-alpine"},
 		{postgresVersion: "postgres:14-alpine"},
-		{postgresVersion: "postgres:13-alpine"},
 	}
 
 	for _, tt := range tests {
@@ -114,7 +114,7 @@ func TestGracefulShutdown(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	cfg := pgContainerConfig{
-		postgresVersion: "postgres:17-alpine",
+		postgresVersion: "postgres:18-alpine",
 		dbName:          "mydatabase",
 		username:        "postgres",
 		password:        "fakepass",
@@ -156,7 +156,7 @@ func TestGracefulShutdownTimeout(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	cfg := pgContainerConfig{
-		postgresVersion: "postgres:17-alpine",
+		postgresVersion: "postgres:18-alpine",
 		dbName:          "mydatabase",
 		username:        "postgres",
 		password:        "fakepass",
