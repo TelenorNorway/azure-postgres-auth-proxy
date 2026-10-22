@@ -47,6 +47,9 @@ export DATABASE_HOST="your-database.postgres.database.azure.com:5432"
 export DATABASE_NAME="mydatabase"
 export DATABASE_USERNAME="your-username"
 
+# Resolve the latest released version of the proxy
+export PROXY_VERSION="$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/TelenorNorway/azure-postgres-auth-proxy/releases/latest | sed 's|.*/v||')"
+
 # Create the service account and deployment
 kubectl apply -f - <<EOF
 apiVersion: v1
@@ -80,7 +83,7 @@ spec:
         args: ["host=127.0.0.1 port=5432 sslmode=disable user=${DATABASE_USERNAME} dbname=${DATABASE_NAME}", "-c", '\l']
       initContainers:
       - name: azure-postgres-auth-proxy
-        image: ghcr.io/telenornorway/azure-postgres-auth-proxy:0.1.3
+        image: ghcr.io/telenornorway/azure-postgres-auth-proxy:${PROXY_VERSION}
         restartPolicy: Always
         args:
         - -db-host=${DATABASE_HOST}
