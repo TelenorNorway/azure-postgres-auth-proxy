@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -15,12 +21,16 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mdelapenya/tlscert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var (
@@ -79,7 +89,7 @@ func TestPanicRecovery(t *testing.T) {
 
 	// This should not panic despite mockConn.Read() panicking
 	// The panic should be recovered in handleConnection
-	handleConnection(context.Background(), mockConn, "test:5432", proxyConnectTimeout, creds)
+	handleConnection(context.Background(), mockConn, "test:5432", proxyConnectTimeout, creds, nil)
 
 	// If we got here, the panic was recovered successfully
 	t.Log("Panic was recovered successfully")
@@ -222,6 +232,164 @@ func TestGracefulShutdownTimeout(t *testing.T) {
 	}
 }
 
+func TestSSHTunnel(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	cfg := pgContainerConfig{
+		postgresVersion: "postgres:18-alpine",
+		dbName:          "mydatabase",
+		username:        "postgres",
+		password:        "fakepass",
+	}
+
+	disableRyukOnDarwin(t)
+	nw, err := network.New(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := nw.Remove(context.Background()); err != nil {
+			t.Logf("failed to remove network: %v", err)
+		}
+	})
+
+	createPostgresContainer(t, cfg, network.WithNetwork([]string{"postgres-db"}, nw))
+	bastion, bastionAddr, clientConfig := createSSHBastion(t, nw)
+
+	tunnel := newSSHTunnel(bastionAddr, clientConfig)
+	t.Cleanup(func() { _ = tunnel.Close() })
+
+	proxyHost := startProxy(t, ctx, "postgres-db:5432", &fakeAzureCredential{
+		token: azcore.AccessToken{Token: cfg.password, ExpiresOn: time.Now().Add(1 * time.Hour)},
+	}, tunnel.DialContext)
+
+	conn := connectThroughProxy(t, ctx, proxyHost, cfg)
+	var result int
+	require.NoError(t, conn.QueryRow(ctx, "SELECT 1").Scan(&result))
+	require.Equal(t, 1, result)
+
+	exitCode, _, err := bastion.Exec(ctx, []string{"pkill", "-f", "sshuser"})
+	require.NoError(t, err)
+	require.Equal(t, 0, exitCode, "expected to kill the SSH session on the bastion")
+	require.Eventually(t, func() bool { return conn.Ping(ctx) != nil }, 5*time.Second, 100*time.Millisecond)
+
+	conn = connectThroughProxy(t, ctx, proxyHost, cfg)
+	require.NoError(t, conn.QueryRow(ctx, "SELECT 1").Scan(&result))
+	require.Equal(t, 1, result)
+}
+
+func createSSHBastion(t *testing.T, nw *testcontainers.DockerNetwork) (testcontainers.Container, string, sshClientConfigFunc) {
+	t.Helper()
+	dir := t.TempDir()
+
+	clientKeyPath, clientKey := writeSSHKey(t, dir, "id_ed25519", newED25519Key(t))
+	hostKeyPath, hostKey := writeSSHKey(t, dir, "ssh_host_ed25519_key", newED25519Key(t))
+	rsaHostKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	rsaHostKeyPath, _ := writeSSHKey(t, dir, "ssh_host_rsa_key", rsaHostKey)
+
+	container, err := testcontainers.Run(t.Context(), "",
+		testcontainers.WithDockerfile(testcontainers.FromDockerfile{Context: filepath.Join("testdata", "ssh-bastion")}),
+		testcontainers.WithExposedPorts("22/tcp"),
+		testcontainers.WithFiles(
+			testcontainers.ContainerFile{HostFilePath: hostKeyPath, ContainerFilePath: "/etc/ssh/ssh_host_ed25519_key", FileMode: 0o600},
+			testcontainers.ContainerFile{HostFilePath: rsaHostKeyPath, ContainerFilePath: "/etc/ssh/ssh_host_rsa_key", FileMode: 0o600},
+			testcontainers.ContainerFile{Reader: bytes.NewReader(ssh.MarshalAuthorizedKey(clientKey)), ContainerFilePath: "/etc/ssh/authorized_keys", FileMode: 0o644},
+		),
+		network.WithNetwork([]string{"ssh-bastion"}, nw),
+		testcontainers.WithWaitStrategy(wait.ForLog("Server listening on").WithStartupTimeout(30*time.Second)),
+	)
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(container); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	})
+	require.NoError(t, err)
+
+	addr, err := container.PortEndpoint(t.Context(), "22/tcp", "")
+	require.NoError(t, err)
+
+	// Only trust the ED25519 key, so the client must not negotiate the RSA key the bastion also offers.
+	knownHostsPath := filepath.Join(dir, "known_hosts")
+	knownHostsLine := knownhosts.Line([]string{knownhosts.Normalize(addr)}, hostKey)
+	require.NoError(t, os.WriteFile(knownHostsPath, []byte(knownHostsLine+"\n"), 0o600))
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	require.NoError(t, err)
+
+	clientConfig, err := sshKeyClientConfig("sshuser", clientKeyPath, "", hostKeyCallback)
+	require.NoError(t, err)
+
+	return container, addr, clientConfig
+}
+
+func newED25519Key(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	return key
+}
+
+func writeSSHKey(t *testing.T, dir, name string, key crypto.Signer) (string, ssh.PublicKey) {
+	t.Helper()
+	block, err := ssh.MarshalPrivateKey(key, "")
+	require.NoError(t, err)
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(block), 0o600))
+
+	signer, err := ssh.NewSignerFromSigner(key)
+	require.NoError(t, err)
+	return path, signer.PublicKey()
+}
+
+func TestBackendErrorIsSentToClient(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	cfg := pgContainerConfig{
+		postgresVersion: "postgres:18-alpine",
+		dbName:          "mydatabase",
+		username:        "postgres",
+		password:        "fakepass",
+	}
+
+	dbHost := createPostgresContainer(t, cfg)
+	proxyHost := startProxy(t, ctx, dbHost, &fakeAzureCredential{
+		token: azcore.AccessToken{Token: "wrong-password", ExpiresOn: time.Now().Add(1 * time.Hour)},
+	}, nil)
+
+	pgErr := connectThroughProxyError(t, proxyHost, cfg)
+	assert.Equal(t, "28P01", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "password authentication failed")
+}
+
+func TestProxyErrorIsSentToClient(t *testing.T) {
+	t.Parallel()
+	cfg := pgContainerConfig{dbName: "mydatabase", username: "postgres"}
+
+	proxyHost := startProxy(t, t.Context(), "127.0.0.1:1", &fakeAzureCredential{
+		err: errors.New("token request was denied"),
+	}, nil)
+
+	pgErr := connectThroughProxyError(t, proxyHost, cfg)
+	assert.Equal(t, "28000", pgErr.Code)
+	assert.Contains(t, pgErr.Message, "token request was denied")
+}
+
+func connectThroughProxyError(t *testing.T, proxyHost string, cfg pgContainerConfig) *pgconn.PgError {
+	t.Helper()
+	connString := fmt.Sprintf("postgresql://%s@%s/%s?sslmode=disable", cfg.username, proxyHost, cfg.dbName)
+
+	var pgErr *pgconn.PgError
+	require.Eventually(t, func() bool {
+		conn, err := pgx.Connect(t.Context(), connString)
+		if err == nil {
+			_ = conn.Close(t.Context())
+			return false
+		}
+		var ok bool
+		pgErr, ok = errors.AsType[*pgconn.PgError](err)
+		return ok
+	}, 10*time.Second, 100*time.Millisecond, "expected a PostgreSQL error from the proxy")
+	return pgErr
+}
+
 // getFreePort asks the kernel for a free open port that is ready to use.
 func getFreePort() (port int, err error) {
 	var a *net.TCPAddr
@@ -240,10 +408,11 @@ func getFreePort() (port int, err error) {
 // the token "test" which will match the PostgreSQL container’s password.
 type fakeAzureCredential struct {
 	token azcore.AccessToken
+	err   error
 }
 
 func (f *fakeAzureCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	return f.token, nil
+	return f.token, f.err
 }
 
 type pgContainerConfig struct {
@@ -253,28 +422,31 @@ type pgContainerConfig struct {
 	password        string
 }
 
-func createPostgresContainer(t *testing.T, cfg pgContainerConfig) string {
+func disableRyukOnDarwin(t *testing.T) {
 	if runtime.GOOS == "darwin" {
-		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
-			require.NoError(t, err, "failed to set environment variable")
-			return ""
-		}
+		require.NoError(t, os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"), "failed to set environment variable")
 	}
+}
+
+func createPostgresContainer(t *testing.T, cfg pgContainerConfig, opts ...testcontainers.ContainerCustomizer) string {
+	disableRyukOnDarwin(t)
 
 	caCert, serverCerts, err := createSSLCerts(t)
 	require.NoError(t, err)
 
 	pgContainer, err := postgres.Run(t.Context(),
 		cfg.postgresVersion,
-		postgres.WithDatabase(cfg.dbName),
-		postgres.WithUsername(cfg.username),
-		postgres.WithPassword(cfg.password),
-		postgres.WithConfigFile(filepath.Join("testdata", "postgres-ssl.conf")),
-		postgres.WithSSLCert(caCert.CertPath, serverCerts.CertPath, serverCerts.KeyPath),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(5*time.Second)),
+		append([]testcontainers.ContainerCustomizer{
+			postgres.WithDatabase(cfg.dbName),
+			postgres.WithUsername(cfg.username),
+			postgres.WithPassword(cfg.password),
+			postgres.WithConfigFile(filepath.Join("testdata", "postgres-ssl.conf")),
+			postgres.WithSSLCert(caCert.CertPath, serverCerts.CertPath, serverCerts.KeyPath),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).
+					WithStartupTimeout(5 * time.Second)),
+		}, opts...)...,
 	)
 
 	t.Cleanup(func() {
@@ -331,16 +503,23 @@ func createSSLCerts(t *testing.T) (*tlscert.Certificate, *tlscert.Certificate, e
 
 // startProxyAndConnect starts the proxy and establishes a connection to the database through the proxy
 func startProxyAndConnect(t *testing.T, ctx context.Context, dbHost string, cfg pgContainerConfig, azCreds azcore.TokenCredential) *pgx.Conn {
+	proxyHost := startProxy(t, ctx, dbHost, azCreds, nil)
+	return connectThroughProxy(t, ctx, proxyHost, cfg)
+}
+
+func startProxy(t *testing.T, ctx context.Context, dbHost string, azCreds azcore.TokenCredential, dial pgconn.DialFunc) string {
 	// get a random available port
 	proxyPort, err := getFreePort()
 	require.NoError(t, err)
 	proxyHost := fmt.Sprintf("127.0.0.1:%d", proxyPort)
 	go func() {
-		err := run(ctx, dbHost, proxyHost, proxyShutdownTimeout, proxyConnectTimeout, azCreds)
+		err := run(ctx, dbHost, proxyHost, proxyShutdownTimeout, proxyConnectTimeout, azCreds, dial)
 		require.NoError(t, err)
 	}()
+	return proxyHost
+}
 
-	// Connect to the database through the proxy.
+func connectThroughProxy(t *testing.T, ctx context.Context, proxyHost string, cfg pgContainerConfig) *pgx.Conn {
 	timeout, retry := 10*time.Second, 1*time.Second
 	var conn *pgx.Conn
 	assert.Eventually(t, func() bool {
